@@ -16,8 +16,8 @@
     'tel',
     'mobile'
   ];
-  var matchRuleStrategy, isNumeric, getFormEl, doValidate, bindEvent,
-      getValidateEls, cancelFormSelfValidate, restartPackageFields,
+  var matchRuleStrategy, isNumeric, doValidate, bindEvent, each,
+      cancelFormSelfValidate, restartPackageFields, validateFormFieldByBlur, validateFormFieldBySubmit, validateField,
       getSpecialEls, getInputs, getCheckboxs, getRadioboxs;
 
   // 是否全部是数字
@@ -26,15 +26,30 @@
   };
 
   bindEvent = function (els, eventName, handle) {
-    (Array.isArray(els)) || (els = [ els ]);
+    if (!Array.isArray(els)) {
+      if ('length' in els)
+        els = Array.prototype.slice.call(els);
+      else
+        els = [ els ];
+    }
 
     els.forEach(function (el, index) {
       el.addEventListener(
         eventName,
-        (function (index, e) { handle(index, e) }).bind(null, index),
+        (function (index, e) { handle.call(this, index, e) }).bind(null, index),
         false
       );
     });
+  };
+
+  each = function (arr, callback) {
+    if (Array.isArray(arr)) {
+      for (var i = 0, length = arr.length; i < length; i++) {
+        if (callback(arr[i], i, arr) === false) {
+          return false;
+        }
+      }
+    }
   };
 
   matchRuleStrategy = function () {
@@ -90,15 +105,6 @@
     }
   };
 
-  getFormEl = function (formSelector) {
-    return document.querySelector(formSelector);
-  };
-
-  // 获取所有待验证的dom
-  getValidateEls = function (parentEl) {
-    return parentEl.querySelectorAll('[data-rule]');
-  };
-
   getSpecialEls = function (callback) {
     return function (els) {
       return Array
@@ -145,48 +151,103 @@
   };
 
   /**
+    @description 验证表单项
+    TODO
+      没通过 => { required: el, email: el }
+      通过 => true
+  **/
+  validateField = function (el, failClassAppendType) {
+    var value = el.value;
+    var dataset = el.dataset;
+    var rules = dataset.rule.split(' ');
+    var ruleMap = {};
+    var failClass;
+
+    rules.forEach(function (rule) {
+      if (!doValidate(rule, value)) {
+        failClass = rule.indexOf('required') >= 0 ?
+          'empty' : 'uninvalid';
+
+        ruleMap[rule] = (
+          failClassAppendType === 'current'
+            ? el.classList.add(failClass)
+            : el.parentNode.classList.add(failClass),
+          el
+        );
+      }
+    });
+
+    return Object.keys(ruleMap).length ? ruleMap : true;
+  };
+
+  /**
+    @description
+    'blur'事件验证表单
+    如果验证成功，返回true，否则返回包含错误信息对象的数组
+  **/
+  validateFormFieldByBlur = function (els, submitType, failClassAppendType) {
+    var match;
+
+    if (submitType === 'blur') {
+      bindEvent(els, 'blur', function (index, e) {
+        validateField(this, failClassAppendType);
+      });
+    }
+  };
+
+  /**
+    @description
+    'submit'事件验证表单
+  **/
+  validateFormFieldBySubmit = function (formEl, els, failClassAppendType, beforeFunc, failFunc, fullFunc) {
+    var uninvalids = [], match;
+
+    bindEvent(formEl, 'submit', function (index, e) {
+      beforeFunc(els);
+
+      Array.from(els).forEach(function (el) {
+        (match = validateField(el, failClassAppendType) !== true) && uninvalids.push(match);
+      });
+
+      uninvalids.length
+        ? (e.preventDefault(), failFunc(uninvalids))
+        : fullFunc(els);
+    });
+  };
+
+  /**
    @description
    TODO
-    1、标识需要验证的dom
-    2、声明错误提示class追加方式(默认追加到当前元素的父元素上)
-    3、验证触发方式 "form submit"、"blur"(默认是blur)
-    4、验证前触发的before函数
-    5、验证成功后的after函数
-    7、异步验证
+     1、标识需要验证的dom
+     2、声明错误提示class追加方式(默认追加到当前元素的父元素上)
+     3、验证触发方式 "form submit"、"blur"(默认是blur)
+     4、验证前触发的before函数
+     5、验证失败的fail函数
+     6、验证成功的full函数
+     7、异步验证
   **/
-  function Validate (formSelector, options) {
-    var formEl = getFormEl(formSelector);
-    var validateEls = getValidateEls(formEl);
-    var fields = restartPackageFields(validateEls);
-    var fails = [];
+  function validate (formSelector, options) {
+    var formEl = document.querySelector(formSelector);
+    var validateEls = formEl.querySelectorAll(formEl);
+    var uninvalids;
 
     // 错误提示class追加到当前验证元素还是验证元素的父元素上，默认是父元素上
-    var failClassAppendType = options.failClassAppendType || 'parent';
+    var failClassAppendType = options.failClassAppendType || 'current';
     // 提交验证的方式
     var submitType = options.submitType || 'blur';
     // 表单验证前处理函数
     var beforeFunc = options.beforeFunc;
-    // 表单验证成功后处理函数
-    var afterFunc = options.afterFunc;
+    // 表单验证失败处理函数
+    var failFunc = options.failFunc;
+    // 表单验证成功处理函数
+    var fullFunc = options.fullFunc;
 
-    if (submitType === 'blur') {
-      // 绑定type="input" blur事件
-      bindEvent(getInputs(validateEls), 'blur', function (e) {
-        var inputEl = e.currentTarget;
-        var rules = inputEl.dataset.rule.split(' ');
-        var value = inputEl.value;
-        var match = rules.every((function (value) {
-          return function (rule) {
-            doValidate(rule, value);
-          }
-        })(value));
-      });
-    }
+    // 监听blur事件，验证表单项
+    validateFormFieldByBlur(validateEls, submitType, failClassAppendType);
+
+    // 监听submit事件
+    validateFormFieldBySubmit(formEl, validateEls, failClassAppendType, beforeFunc, failFunc, fullFunc);
   }
 
-  function validator (formSelector, options) {
-    return new Validate(options);
-  }
-
-  return validator;
+  return validate;
 });
